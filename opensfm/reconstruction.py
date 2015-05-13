@@ -302,6 +302,12 @@ def resect(data, graph, reconstruction, shot_id):
     K = multiview.K_from_camera(reconstruction['cameras'][camera_model])
     dist = np.array([0,0,0,0.])
 
+    arr = np.arange(x.shape[0])
+    np.random.shuffle(arr)
+
+    x = x[arr]
+    X = X[arr]
+
     # Prior on focal length
     R, t, inliers = cv2.solvePnPRansac(X.astype(np.float32), x.astype(np.float32), K, dist,
         reprojectionError=data.config.get('resection_threshold', 0.004))
