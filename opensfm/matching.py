@@ -69,6 +69,11 @@ def robust_match(p1, p2, matches, config):
     if len(matches) < 8:
         return np.array([])
 
+    arr = np.arange(matches.shape[0])
+    np.random.shuffle(arr)
+
+    matches = matches[arr, :]
+
     p1 = p1[matches[:, 0]][:, :2].copy()
     p2 = p2[matches[:, 1]][:, :2].copy()
 
