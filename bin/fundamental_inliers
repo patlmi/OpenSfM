@@ -1,0 +1,258 @@
+#!/usr/bin/env python
+
+import argparse
+import matplotlib.pyplot as pl
+import numpy as np
+import cv2
+
+import matplotlib.cm as cm
+
+from opensfm import dataset
+from opensfm import matching
+from opensfm import features
+
+
+def plot_points(plot, im1, p1, point_format1='ob'):
+
+    if p1.shape[0] == 0:
+        return
+
+    h1, w1, c = im1.shape
+    p1d = features.denormalized_image_coordinates(p1, w1, h1)
+    plot.plot(p1d[:, 0], p1d[:, 1], point_format1)
+
+
+def plot_points_scatter(plot, im1, p1, colors1, cmap=cm.hot):
+
+    if p1.shape[0] == 0:
+        return
+
+    h1, w1, c = im1.shape
+    p1d = features.denormalized_image_coordinates(p1, w1, h1)
+    plot.scatter(p1d[:, 0], p1d[:, 1], c=colors1, cmap=cmap)
+
+
+def create_subplot(figure, rows, columns, index, title, width, height, font_size=12):
+    """ Creates a subplot with the supplied width. """
+    subplot = figure.add_subplot(rows, columns, index)
+    subplot.axis('off')
+    pl.xlim(0, width)
+    pl.ylim(height, 0)
+    subplot.text(0.5, 1.04,
+                 title,
+                 horizontalalignment='center',
+                 fontsize=font_size,
+                 transform=subplot.transAxes)
+
+    return subplot
+
+
+if __name__ == "__main__":
+
+    np.seterr(all='raise')
+
+    parser = argparse.ArgumentParser(description='Test fundamental matrix inliers')
+    parser.add_argument('dataset', help='path to the data set to be processed')
+    parser.add_argument('--single_row', action='store_true',
+                        help='If only the row with the original row should be computed.')
+
+    args = parser.parse_args()
+    data = dataset.DataSet(args.dataset)
+
+    single_row = True if args.single_row else False
+
+    im1 = '01.jpg'
+    im2 = '03.jpg'
+
+    im1_feature_id = 1855
+    im2_feature_id = 891
+
+    im1_array = data.image_as_array(im1)
+    im2_array = data.image_as_array(im2)
+
+    scale = np.max(im1_array.shape)
+
+    p1, f1, c1 = data.load_features(im1)
+    i1 = data.load_feature_index(im1, f1)
+
+    p2, f2, c2 = data.load_features(im2)
+    i2 = data.load_feature_index(im2, f2)
+
+    symmetric_matches = matching.match_symmetric(f1, i1, f2, i2, data.config)
+
+    p1 = np.array(p1[:, :2], np.float64)
+    p2 = np.array(p2[:, :2], np.float64)
+
+    feature_point = p2[im2_feature_id, :]
+    epipole_mean = np.array([-0.0232217747622, 0.470166785217])
+    slope = (epipole_mean[1] - feature_point[1]) / (epipole_mean[0] - feature_point[0])
+
+    normal = np.array([1, -1. / slope])
+    normal = normal / np.linalg.norm(normal)
+
+    test_centers = np.resize(feature_point, (1, 2))
+
+    if not single_row:
+        tangent = epipole_mean - feature_point
+        dist = np.linalg.norm(tangent)
+
+        lower = np.resize(feature_point, (2, 1)) + np.resize(tangent, (2, 1)) * np.linspace(0, dist * 1.2, 54)[1:]
+        higher = np.resize(feature_point, (2, 1)) + np.resize(tangent, (2, 1)) * np.linspace(-dist * 0.2, 0, 9)[:-1]
+
+        test_centers = np.vstack((test_centers, lower.T))
+        test_centers = np.vstack((test_centers, higher.T))
+
+    test_points = []
+
+    for i in range(-45, 55, 1):
+        test_points.append(test_centers + i / 343. * normal)
+
+    test_points = np.array(test_points)
+    test_points = np.reshape(test_points, (test_points.shape[0] * test_points.shape[1], test_points.shape[2]))
+
+    counts = {}
+    fundamental_iterations = 100
+    test_point_count = test_points.shape[0]
+
+    for index, test_point in enumerate(test_points):
+
+        counts[str(index)] = {}
+        counts[str(index)]['coord'] = test_point
+
+        count = 0
+        for i in range(0, fundamental_iterations, 1):
+
+            p2[im2_feature_id, :] = test_point
+
+            arr = np.arange(symmetric_matches.shape[0])
+            np.random.shuffle(arr)
+
+            rnd_symmetric_matches = symmetric_matches[arr, :]
+
+            ps1 = p1[rnd_symmetric_matches[:, 0]]
+            ps2 = p2[rnd_symmetric_matches[:, 1]]
+
+            F, mask = cv2.findFundamentalMat(ps1, ps2, cv2.cv.CV_FM_RANSAC,
+                                             data.config.get('robust_matching_threshold', 0.006), 0.9999)
+
+            # OpenCV sometimes returns a fundamental matrix with all values set to zero.
+            if np.max(np.abs(F)) < 1.e-15:
+                continue
+
+            mask = np.squeeze(mask.astype(np.bool))
+            robust_matches = rnd_symmetric_matches[mask, :]
+
+            if np.sum((robust_matches[:, 0] == im1_feature_id) & (robust_matches[:, 1] == im2_feature_id)) > 0:
+                count += 1
+
+        counts[str(index)]['count'] = count
+
+        print 'Tested ' + str(index + 1) + ' / ' + str(test_point_count) + '. Count: ' + str(count)
+
+    blacks = []
+    blues = []
+    magentas = []
+    reds = []
+    yellows = []
+    whites = []
+
+    plot_colors = []
+
+    for count in counts:
+        coord = counts[count]['coord']
+        fraction = counts[count]['count'] / float(fundamental_iterations)
+
+        if fraction < 0.02:
+            blacks.append(coord)
+        elif fraction < 0.05:
+            blues.append(coord)
+        elif fraction < 0.1:
+            magentas.append(coord)
+        elif fraction < 0.15:
+            reds.append(coord)
+        elif fraction < 0.25:
+            yellows.append(coord)
+        else:
+            whites.append(coord)
+
+    blacks = np.array(blacks)
+    blues = np.array(blues)
+    magentas = np.array(magentas)
+    reds = np.array(reds)
+    yellows = np.array(yellows)
+    whites = np.array(whites)
+
+    fig = pl.figure(figsize=(12, 12))
+    h2, w2 = im2_array.shape[:2]
+    subplot = create_subplot(fig, 1, 1, 1, '', w2, h2)
+    fig.subplots_adjust(left=0.01, bottom=0.01, right=0.99, top=0.99, wspace=0., hspace=0.)
+    subplot.imshow(im2_array)
+
+    plot_points(subplot, im2_array, blacks, 'ok')
+    plot_points(subplot, im2_array, blues, 'ob')
+    plot_points(subplot, im2_array, magentas, 'om')
+    plot_points(subplot, im2_array, reds, 'or')
+    plot_points(subplot, im2_array, yellows, 'oy')
+    plot_points(subplot, im2_array, whites, 'ow')
+
+    pl.show()
+
+
+
+
+    colors = []
+    coords = []
+    for count in counts:
+        coords.append(counts[count]['coord'])
+        fraction = counts[count]['count'] / float(fundamental_iterations)
+        colors.append(fraction)
+
+    colors = np.array(colors)
+    coords = np.array(coords)
+
+    fig = pl.figure(figsize=(12, 12))
+    h2, w2 = im2_array.shape[:2]
+    subplot = create_subplot(fig, 1, 1, 1, '', w2, h2)
+    fig.subplots_adjust(left=0.01, bottom=0.01, right=0.99, top=0.99, wspace=0., hspace=0.)
+    subplot.imshow(im2_array)
+    plot_points_scatter(subplot, im2_array, coords, colors)
+    pl.show()
+
+    if single_row:
+
+        sorted_counts = sorted(counts.keys(), key=lambda k: counts[k]['coord'][0])
+
+        lefts = np.array([index + 1 for index, count in enumerate(sorted_counts)])
+        heights = np.array([counts[count]['count'] / float(fundamental_iterations) for count in sorted_counts])
+
+        plot_colors = []
+
+        for count in sorted_counts:
+            epipole_mean = counts[count]['count']
+
+            fraction = epipole_mean / float(fundamental_iterations)
+
+            if fraction < 0.02:
+                plot_colors.append('k')
+            elif fraction < 0.05:
+                plot_colors.append('b')
+            elif fraction < 0.1:
+                plot_colors.append('m')
+            elif fraction < 0.15:
+                plot_colors.append('r')
+            elif fraction < 0.25:
+                plot_colors.append('y')
+            else:
+                plot_colors.append('w')
+
+        max = np.max(heights)
+
+        np.savetxt(data.data_path + '/robust_heights.txt', heights)
+
+        fig, ax = pl.subplots()
+
+        pl.ylim(0., 0.5)
+        pl.xlim(1, 100)
+        ax.bar(lefts, heights, align='center', color=plot_colors)
+
+        pl.show()
