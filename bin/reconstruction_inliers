@@ -1,0 +1,331 @@
+#!/usr/bin/env python
+
+import os.path, sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from opensfm import geo
+
+import argparse
+import numpy as np
+import time
+import matplotlib.pyplot as pl
+import matplotlib.cm as cm
+
+from opensfm import dataset
+from opensfm import matching
+from opensfm import features
+from opensfm import io
+import opensfm.reconstruction as reconstruct
+
+
+def redirect_print():
+    reset = sys.stdout
+    f = open(os.devnull, 'w')
+    sys.stdout = f
+
+    return reset
+
+
+def reset_print(f):
+    sys.stdout = f
+
+
+def plot_points(plot, im1, p1, point_format1='ob'):
+
+    if p1.shape[0] == 0:
+        return
+
+    h1, w1, c = im1.shape
+    p1d = features.denormalized_image_coordinates(p1, w1, h1)
+    plot.plot(p1d[:, 0], p1d[:, 1], point_format1)
+
+def plot_points_scatter(plot, im1, p1, colors1, cmap=cm.hot):
+
+    if p1.shape[0] == 0:
+        return
+
+    h1, w1, c = im1.shape
+    p1d = features.denormalized_image_coordinates(p1, w1, h1)
+    plot.scatter(p1d[:, 0], p1d[:, 1], c=colors1, cmap=cmap)
+
+
+def create_subplot(figure, rows, columns, index, title, width, height, font_size=12):
+    subplot = figure.add_subplot(rows, columns, index)
+    subplot.axis('off')
+    pl.xlim(0, width)
+    pl.ylim(height, 0)
+    subplot.text(0.5, 1.04,
+                 title,
+                 horizontalalignment='center',
+                 fontsize=font_size,
+                 transform=subplot.transAxes)
+
+    return subplot
+
+
+def match_arguments(images):
+    for i, im in enumerate(images):
+        yield im, i, len(images)
+
+
+def match(args, test_point):
+    im1, i, n = args
+    print('Matching {}  -  {} / {}'.format(im1, i, n))
+
+    matching_gps_distance = data.config.get('matching_gps_distance', 9999999)
+    robust_matching_min_match = data.config.get('robust_matching_min_match', 20)
+    preemptive_threshold = data.config.get('preemptive_threshold', 1)
+
+    im1_matches = {}
+
+    found = False
+
+    for im2 in images:
+        if im2 < im1:
+            # gps distance
+            distance = 0
+            if im1 in exifs and im2 in exifs:
+                gps1 = exifs[im1].get('gps',{})
+                gps2 = exifs[im2].get('gps',{})
+                if gps1 and gps2:
+                    lon1, lat1 = gps1['longitude'], gps1['latitude']
+                    lon2, lat2 = gps2['longitude'], gps2['latitude']
+                    distance = geo.gps_distance([lon1,lat1], [lon2, lat2])
+            if distance > matching_gps_distance:
+                print "Discarding based on GPS distance {0} > {1}".format(distance, matching_gps_distance)
+                continue
+
+            # preemptive matching
+            t = time.time()
+            lowes_ratio = data.config.get('lowes_ratio', 0.6)
+            data.config['lowes_ratio'] = data.config.get('preemptive_lowes_ratio', 0.6)
+            matches_pre = matching.match_lowe_bf(f_pre[im1], f_pre[im2], data.config)
+            data.config['lowes_ratio'] = lowes_ratio
+            print "Preemptive matching {0}, time: {1}s".format(len(matches_pre), time.time()-t)
+            if len(matches_pre) < preemptive_threshold:
+                print "Discarding based of preemptive matches {0} < {1}".format(len(matches_pre), preemptive_threshold)
+                continue
+
+            # symmetric matching
+            t = time.time()
+            p1, f1, c1 = data.load_features(im1)
+            i1 = data.load_feature_index(im1, f1)
+
+            p2, f2, c2 = data.load_features(im2)
+            i2 = data.load_feature_index(im2, f2)
+
+            # Update feature point to test position
+            if im1 == '03.jpg' and im2 == '01.jpg':
+                p1[891, :2] = test_point
+
+            matches = matching.match_symmetric(f1, i1, f2, i2, data.config)
+            if len(matches) < robust_matching_min_match:
+                im1_matches[im2] = []
+                continue
+
+            # robust matching
+            t_robust_matching = time.time()
+            rmatches = matching.robust_match(p1, p2, matches, data.config)
+
+            # Test for inclusion
+            if im1 == '03.jpg' and im2 == '01.jpg':
+                if np.sum((rmatches[:, 0] == 891) & (rmatches[:, 1] == 1855)) > 0:
+                    found = True
+
+            if len(rmatches) < robust_matching_min_match:
+                im1_matches[im2] = []
+                continue
+            im1_matches[im2] = rmatches
+            print 'Robust matching time : {0}s'.format(time.time() - t_robust_matching)
+
+            print "Full matching {0} / {1}, time: {2}s".format(len(rmatches), len(matches), time.time() - t)
+
+    data.save_matches(im1, im1_matches)
+
+    return found
+
+
+if __name__ == "__main__":
+
+    np.seterr(all='raise')
+
+    parser = argparse.ArgumentParser(description='Test')
+    parser.add_argument('dataset', help='path to the data set to be processed')
+    parser.add_argument('--low', help='name of the track to plot (integer)', type=int)
+    parser.add_argument('--high', help='name of the track to plot (integer)', type=int)
+
+    figure_none = pl.figure(figsize=(12, 12))
+
+    args = parser.parse_args()
+    data = dataset.DataSet(args.dataset)
+    images = data.images()
+    matcher_type = data.matcher_type()
+
+    low = args.low
+    high = args.high
+
+    im1 = '01.jpg'
+    im2 = '03.jpg'
+
+    im1_feature_id = 1855
+    im2_feature_id = 891
+
+    im1_array = data.image_as_array(im1)
+    im2_array = data.image_as_array(im2)
+
+    p1, f1, c1 = data.load_features(im1)
+    i1 = data.load_feature_index(im1, f1)
+
+    p2, f2, c2 = data.load_features(im2)
+    i2 = data.load_feature_index(im2, f2)
+
+    p1 = np.array(p1[:, :2], np.float64)
+    p2 = np.array(p2[:, :2], np.float64)
+
+    feature_point2 = p2[im2_feature_id, :]
+    epipole_mean = np.array([-0.0232217747622, 0.470166785217])
+    slope = (epipole_mean[1] - feature_point2[1]) / (epipole_mean[0] - feature_point2[0])
+    normal = np.array([1, -1. / slope])
+    normal = normal / np.linalg.norm(normal)
+
+    test_center = np.resize(feature_point2, (1, 2))
+
+    test_points = []
+
+    for i in range(low, high, 1):
+        test_points.append(test_center + i / 343. * normal)
+
+    test_points = np.array(test_points)
+    test_points = np.reshape(test_points, (test_points.shape[0] * test_points.shape[1], test_points.shape[2]))
+
+    counts = {}
+    matching_iterations = 100
+    reconstruction_iterations = 100
+    test_point_count = test_points.shape[0]
+
+    for index, test_point in enumerate(test_points):
+
+        counts[str(index)] = {}
+        counts[str(index)]['coord'] = test_point
+
+        for i in range(0, matching_iterations, 1):
+
+            print_output = redirect_print()
+            p2[im2_feature_id, :] = test_point
+
+            exifs = {}
+            p_pre, f_pre = {}, {}
+            for image in images:
+                sys.stdout.write('.')
+                sys.stdout.flush()
+                try:
+                    p_pre[image], f_pre[image] = data.load_preemtive_features(image)
+                except IOError:
+                    p, f, c = data.load_features(image)
+                    p_pre[image], f_pre[image] = p, f
+                preemptive_max = min(data.config.get('preemptive_max', p_pre[image].shape[0]), p_pre[image].shape[0])
+                p_pre[image] = p_pre[image][:preemptive_max,:]
+                f_pre[image] = f_pre[image][:preemptive_max,:]
+                exifs[image] = data.load_exif(image)
+
+            included = False
+            for args in match_arguments(images):
+                match_result = match(args, test_point)
+
+                included = included or match_result
+
+            reset_print(print_output)
+
+            print 'Match features ' + str(i + 1) + ' / ' + str(matching_iterations) + ' Found: ' + str(included)
+
+            if included:
+                break
+
+
+        print_output = redirect_print()
+
+        feats = {}
+        colors = {}
+        for im in images:
+            p, f, c = data.load_features(im)
+
+            if im == '03.jpg':
+                p[im2_feature_id, :2] = test_point
+
+            feats[im] = p[:,:2]
+            colors[im] = c
+
+        matches = {}
+        for im1 in images:
+            try:
+                im1_matches = data.load_matches(im1)
+            except IOError:
+                continue
+            for im2 in im1_matches:
+                matches[im1, im2] = im1_matches[im2]
+
+        tracks_graph = matching.create_tracks_graph(feats, colors, matches, data.config)
+        data.save_tracks_graph(tracks_graph)
+
+        reset_print(print_output)
+
+        tr_graph_loaded = data.load_tracks_graph()
+
+        tr = None
+        for track in tr_graph_loaded['03.jpg']:
+            edges = tr_graph_loaded[track]
+
+            if '03.jpg' in edges:
+                if edges['03.jpg']['feature_id'] == im2_feature_id and edges['01.jpg']['feature_id'] == im1_feature_id:
+                    counts[str(index)]['tr_coord'] = edges['03.jpg']['feature']
+                    tr = track
+
+        count = 0
+        if tr is None:
+            print '\n########################################################################'
+            print 'Warning: track not found'
+        else:
+            for i in range(0, reconstruction_iterations, 1):
+
+                print_output = redirect_print()
+
+                reconstruct.incremental_reconstruction(data)
+
+                rec = data.load_reconstruction()
+
+                if tr in rec[0]['points']:
+                    count += 1
+
+                reset_print(print_output)
+
+                print 'Reconstruct ' + str(i + 1) + ' / ' + str(reconstruction_iterations) + ' Count: ' + str(count)
+
+        counts[str(index)]['count'] = count
+
+        print '\n########################################################################'
+        print 'Tested ' + str(index + 1) + ' / ' + str(test_point_count) + '. Count: ' + str(count)
+        print '########################################################################\n'
+
+    sorted_counts = np.array(sorted(counts.keys(), key=lambda k: counts[k]['coord'][0]))
+
+    heights = []
+    coords = []
+    tr_coords = []
+
+    for count in sorted_counts:
+        coords.append(counts[count]['coord'])
+        heights.append(counts[count]['count'] / float(reconstruction_iterations))
+
+        if 'tr_coord' in counts[count]:
+            tr_coords.append(counts[count]['tr_coord'])
+        else:
+            tr_coords.append(np.array([0., 0.]))
+
+    coords = np.array(coords)
+    tr_coords = np.array(tr_coords)
+
+    p = data.data_path + '/tests/'
+    io.mkdir_p(p)
+    np.savetxt(p + 'reconstruct_heights_{0}_{1}.txt'.format(low, high-1), heights)
+    np.savetxt(p + 'reconstruct_coords_{0}_{1}.txt'.format(low, high-1), coords)
+    np.savetxt(p + 'reconstruct_tr_coords_{0}_{1}.txt'.format(low, high-1), tr_coords)
