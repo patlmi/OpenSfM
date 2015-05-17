@@ -2,6 +2,7 @@
 
 import argparse
 import matplotlib.pyplot as pl
+from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 import cv2
 
@@ -100,11 +101,13 @@ if __name__ == "__main__":
         higher = np.resize(feature_point, (2, 1)) + np.resize(tangent, (2, 1)) * np.linspace(-dist * 0.2, 0, 9)[:-1]
 
         test_centers = np.vstack((test_centers, lower.T))
-        test_centers = np.vstack((test_centers, higher.T))
+        test_centers = np.vstack((higher.T, test_centers))
 
     test_points = []
 
-    for i in range(-45, 55, 1):
+    low = -45
+    high = 55
+    for i in range(low, high, 1):
         test_points.append(test_centers + i / 343. * normal)
 
     test_points = np.array(test_points)
@@ -228,9 +231,7 @@ if __name__ == "__main__":
         plot_colors = []
 
         for count in sorted_counts:
-            epipole_mean = counts[count]['count']
-
-            fraction = epipole_mean / float(fundamental_iterations)
+            fraction = counts[count]['count'] / float(fundamental_iterations)
 
             if fraction < 0.02:
                 plot_colors.append('k')
@@ -245,14 +246,59 @@ if __name__ == "__main__":
             else:
                 plot_colors.append('w')
 
-        max = np.max(heights)
-
-        np.savetxt(data.data_path + '/robust_heights.txt', heights)
-
         fig, ax = pl.subplots()
 
         pl.ylim(0., 0.5)
         pl.xlim(1, 100)
         ax.bar(lefts, heights, align='center', color=plot_colors)
+
+        pl.show()
+    else:
+        row_length = test_centers.shape[0]
+        rows = test_points.shape[0] / row_length
+
+        xpos, ypos = np.meshgrid(np.arange(1, row_length + 1)-0.5, np.arange(1, rows + 1)-0.5)
+
+        xpos = xpos.flatten()
+        ypos = ypos.flatten()
+        zpos = np.zeros(test_points.shape[0])
+
+        dx = 0.3 * np.ones_like(zpos)
+        dy = 0.75 * dx.copy()
+
+        dz = []
+        plot_colors = []
+
+        indices = sorted([int(k) for k in counts.keys()])
+
+        for index in indices:
+            fraction = counts[str(index)]['count'] / float(fundamental_iterations)
+            dz.append(fraction)
+
+            if fraction < 0.02:
+                plot_colors.append('k')
+            elif fraction < 0.05:
+                plot_colors.append('b')
+            elif fraction < 0.1:
+                plot_colors.append('m')
+            elif fraction < 0.15:
+                plot_colors.append('r')
+            elif fraction < 0.25:
+                plot_colors.append('y')
+            else:
+                plot_colors.append('w')
+
+        dz = np.array(dz)
+
+        dz[dz < 0.0001] = 0.0001
+
+        a = np.min(dz)
+
+        fig = pl.figure()
+        ax = fig.add_subplot(111, projection='3d')
+
+        pl.ylim(0, rows)
+        pl.xlim(0, row_length)
+        ax.bar3d(xpos, ypos, zpos, dx, dy, dz, color=plot_colors, linewidth=0.)
 
         pl.show()
