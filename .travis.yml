@@ -1,9 +1,31 @@
 language: python
+
 python:
-  - "2.7"
+  - 2.7
+
+before_install:
+  - sudo apt-get update -qq
+
+  # Setup miniconda
+  - wget http://repo.continuum.io/miniconda/Miniconda-latest-Linux-x86_64.sh -O miniconda.sh
+  - chmod +x miniconda.sh
+  - ./miniconda.sh -b
+  - export PATH=/home/travis/miniconda/bin:$PATH
+  - conda update --yes conda
+
+  # Avoid Travis multiprocessing crash.
+  - sudo rm -rf /dev/shm
+  - sudo ln -s /run/shm /dev/shm
+
 install:
-  - sudo apt-get install python-opencv libopencv-dev libgoogle-glog-dev libatlas-base-dev libeigen3-dev libsuitesparse-dev libboost-python-dev python-pyexiv2
-  - pip install -r requirements.txt
-script:
-  - python setup.py build_clib
-  - python setup.py build_ext --inline
+  - conda install --yes python=$TRAVIS_PYTHON_VERSION atlas numpy scipy matplotlib opencv
+  - sudo apt-get install python-dev libboost-python-dev
+  - pip install networkx pyyaml exifread gpxpy
+
+  - sudo apt-get install libgoogle-glog-dev libatlas-base-dev libeigen3-dev
+
+  - sudo add-apt-repository ppa:bzindovic/suitesparse-bugfix-1319687
+  - sudo apt-get update
+  - sudo apt-get install libsuitesparse-dev
+
+  - python setup.py install
