@@ -22,7 +22,9 @@ install:
   - sudo apt-get install python-dev libboost-python-dev
   - pip install networkx pyyaml exifread gpxpy
 
-  - sudo apt-get install libgoogle-glog-dev libatlas-base-dev libeigen3-dev
+  - sudo apt-get install libgoogle-glog-dev
+  - sudo apt-get install libatlas-base-dev
+  - sudo apt-get install libeigen3-dev
 
   - sudo add-apt-repository ppa:bzindovic/suitesparse-bugfix-1319687
   - sudo apt-get update
