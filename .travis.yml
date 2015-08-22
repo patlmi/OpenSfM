@@ -31,8 +31,8 @@ install:
   - sudo apt-get install libgoogle-glog-dev
 
   # This ppa is for shared library version of suitesparse
-  - sudo add-apt-repository ppa:bzindovic/suitesparse-bugfix-1319687
-  - sudo apt-get update
+  - sudo add-apt-repository -y ppa:bzindovic/suitesparse-bugfix-1319687
+  - sudo apt-get -y update
   - sudo apt-get install libsuitesparse-dev
 
   - python setup.py install
