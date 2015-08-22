@@ -24,8 +24,13 @@ install:
 
   - sudo apt-get install libatlas-base-dev
   - sudo apt-get install libeigen3-dev
+
+  # This ppa is for gflags and glog
+  - sudo add-apt-repository -y ppa:tuleu/precise-backports
+  - sudo apt-get -y update
   - sudo apt-get install libgoogle-glog-dev
 
+  # This ppa is for shared library version of suitesparse
   - sudo add-apt-repository ppa:bzindovic/suitesparse-bugfix-1319687
   - sudo apt-get update
   - sudo apt-get install libsuitesparse-dev
