@@ -31,7 +31,7 @@ install:
   - sudo apt-get install libatlas-base-dev
   - sudo apt-get install libeigen3-dev
 
-  #install openCV
+  # install openCV
   - sudo add-apt-repository "deb http://ppa.launchpad.net/alexei.colin/opencv/ubuntu precise main" -y
   - sudo apt-get update -qq
   - sudo apt-get install -qq libopencv-dev libopencv-nonfree-dev
@@ -48,7 +48,7 @@ install:
   - curl http://ceres-solver.org/ceres-solver-1.9.0.tar.gz | tar xvz
   - mkdir ceres-bin && cd ceres-bin
   - cmake -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF $CM_ENV ../ceres-solver-1.9.0
-  -./configure --enable-shared
+  - ./configure --enable-shared
   - make -j2
   - sudo make install
   - cd ..
